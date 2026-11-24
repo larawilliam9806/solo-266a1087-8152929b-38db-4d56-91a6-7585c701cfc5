@@ -60,6 +60,34 @@ CREATE TABLE IF NOT EXISTS reconciliations (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_reconciliations_hour_order
     ON reconciliations(hour, meter_id);
+
+CREATE TABLE IF NOT EXISTS period_total_sets (
+    set_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    meter_id       TEXT NOT NULL REFERENCES meters(meter_id),
+    day            TEXT NOT NULL,
+    version        INTEGER NOT NULL,
+    segment_count  INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(meter_id, day, version)
+);
+CREATE INDEX IF NOT EXISTS idx_period_sets_lookup
+    ON period_total_sets(meter_id, day, version);
+
+CREATE TABLE IF NOT EXISTS period_total_segments (
+    segment_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    set_id       INTEGER NOT NULL REFERENCES period_total_sets(set_id) ON DELETE CASCADE,
+    meter_id     TEXT NOT NULL REFERENCES meters(meter_id),
+    day          TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    start_index  INTEGER NOT NULL CHECK (start_index >= 0 AND start_index <= 24),
+    end_index    INTEGER NOT NULL CHECK (end_index >= 0 AND end_index <= 24),
+    start_hour   TEXT NOT NULL,
+    end_hour     TEXT NOT NULL,
+    amount       INTEGER NOT NULL CHECK (amount >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_period_segments_set ON period_total_segments(set_id, seq);
+CREATE INDEX IF NOT EXISTS idx_period_segments_meter_day
+    ON period_total_segments(meter_id, day);
 """
 
 
@@ -101,6 +129,29 @@ def read_connection() -> Iterator[sqlite3.Connection]:
 
 
 @contextmanager
+def snapshot_transaction() -> Iterator[sqlite3.Connection]:
+    """A read transaction with one consistent snapshot across several SELECTs.
+
+    In WAL mode the snapshot is established by the first read and stays stable
+    until commit, so readings and period totals are observed at the same
+    effective point in time.
+    """
+    conn = connect()
+    try:
+        conn.execute("BEGIN")
+        yield conn
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+@contextmanager
 def write_transaction() -> Iterator[sqlite3.Connection]:
     """Serialize writers and make ledger + conclusion commit atomic."""
     with _write_lock:
@@ -125,6 +176,8 @@ def write_transaction() -> Iterator[sqlite3.Connection]:
 def reset_database_file() -> None:
     """Test/reset helper. Removes all rows while preserving schema."""
     with write_transaction() as conn:
+        conn.execute("DELETE FROM period_total_segments")
+        conn.execute("DELETE FROM period_total_sets")
         conn.execute("DELETE FROM reconciliations")
         conn.execute("DELETE FROM reading_events")
         conn.execute("DELETE FROM readings")

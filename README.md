@@ -136,6 +136,45 @@ PUT /readings/A1/2026-01-01T00:00:00Z
 DELETE /readings/A1/2026-01-01T00:00:00Z
 ```
 
+### 2.5 换交时段合计、领取恢复明细
+
+数据员按“已登记表号 + UTC 日”**整份换交**时段合计。每段给出起止整点与非负整数 Wh，覆盖 `[start, end)` 的整点（含起点、不含终点），且覆盖的小时必须全部属于所报 UTC 日；各段允许重叠。“整份换交”指每次请求提交该表该日的完整分段集合，由新集合整体替换旧集合。
+
+```bash
+curl -X POST http://localhost:8000/period-totals \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "meter_id": "A-1F",
+    "date": "2026-01-01",
+    "segments": [
+      {"start_hour": 0, "end_hour": 6, "total_wh": 300},
+      {"start_hour": 0, "end_hour": 2, "total_wh": 120}
+    ]
+  }'
+```
+
+- `POST` / `PUT` `/period-totals`（同样支持 `/interval-totals`、`/totals`、`/meters/{meter_id}/period-totals` 等别名，以及 `/api`、`/api/v1` 等前缀）。
+- `start_hour`/`end_hour` 接受日内整数下标（`0`–`24`，`24` 仅可作为结束）、`"HH:00"`/`"HHMM"` 或绝对 UTC 整点。
+- 整份替换该表该日的上一份合计；提交时与**当前生效的原报**一起做可行性核对：不存在非负整数分配时返回 `409 period_totals_infeasible`，事务回滚，**保留上一份合计**；保存期内任何异常同样回滚保留。
+
+分析数仓按表号和日期领取 24 小时明细：
+
+```bash
+curl 'http://localhost:8000/recovery?meter_id=A-1F&date=2026-01-01'
+# 或 /recovery/A-1F/2026-01-01、/meters/A-1F/hours?date=...、
+# /hourly-readings、/daily-details、/warehouse/hours 等
+```
+
+`hours` 固定 24 条（下标 `0..23`），每条含 `hour`、`amount` 与来源标记：
+
+- `"status": "original"`（原报，另有 `reported=true`、`state="reported"` 等别名）
+- `"status": "recovered"`（恢复，另有 `is_recovered`、`recovered_amount`）
+- `"status": "pending"`（待补，`amount=null`，另有 `missing=true`、`state="missing"`）
+
+只有当某缺报小时在“全部原报 + 全部时段合计”的**所有非负整数解**中取值唯一时才给恢复值；否则保持待补。求解使用前缀和差分约束 + 全源最短路精确判定每个变量的整数上下界。
+
+每次领取在同一个 SQLite 只读快照中读取当前已生效的原报与合计。若原报事后补报/订正/撤回导致与已存合计**冲突**，返回 `200` 但 `"conflict": true`、`"status": "conflict"`：只提供原报，其余小时待补，不提供推断值；当账目重新相容后再次领取会自动恢复推算，无需重新提交合计。
+
 ### 3. 按小时查询已存结论
 
 集合接口直接返回数组：

@@ -42,6 +42,8 @@ def register_meters(payload: Any, *, replace: bool = False) -> dict[str, Any]:
 
     with write_transaction() as conn:
         if replace:
+            conn.execute("DELETE FROM period_total_segments")
+            conn.execute("DELETE FROM period_total_sets")
             conn.execute("DELETE FROM reconciliations")
             conn.execute("DELETE FROM reading_events")
             conn.execute("DELETE FROM readings")
@@ -385,3 +387,19 @@ def recompute_all_for_hour(hour_value: Any) -> dict[str, Any]:
             if result is not None:
                 stored.append(result)
     return {"hour": hour, "count": len(stored), "results": stored, "conclusions": stored}
+
+
+# --------------------------------------------------------------------------- #
+# Period-total recovery use cases (re-exported for ``from app import service``)
+# --------------------------------------------------------------------------- #
+from . import recovery_service as _recovery_service  # noqa: E402
+
+submit_period_totals = _recovery_service.submit_period_totals
+replace_period_totals = _recovery_service.submit_period_totals
+put_period_totals = _recovery_service.submit_period_totals
+get_period_totals = _recovery_service.get_period_totals
+get_daily_details = _recovery_service.get_daily_details
+get_recovery = _recovery_service.get_daily_details
+recover_day = _recovery_service.get_daily_details
+recover_hours = _recovery_service.get_daily_details
+get_hourly_details = _recovery_service.get_daily_details

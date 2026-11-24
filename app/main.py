@@ -13,6 +13,7 @@ from .api import router
 from .config import SEED_DEMO_TREE
 from .db import init_db
 from .errors import ApiProblem
+from .recovery_api import recovery_router
 from .seed import seed_fixed_tree
 
 logger = logging.getLogger("reconciliation")
@@ -91,6 +92,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # Primary unprefixed REST API plus common versioned/domain prefixes.
 app.include_router(router)
+app.include_router(recovery_router)
 for prefix in (
     "/api",
     "/api/v1",
@@ -102,3 +104,4 @@ for prefix in (
     "/api/v1/electricity",
 ):
     app.include_router(router, prefix=prefix, include_in_schema=False)
+    app.include_router(recovery_router, prefix=prefix, include_in_schema=False)

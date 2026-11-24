@@ -169,6 +169,9 @@ def index() -> dict[str, Any]:
             "correct": ["PUT /readings", "POST /readings/correct"],
             "withdraw": ["DELETE /readings", "POST /readings/withdraw"],
             "conclusions": ["GET /reconciliations?hour=...", "GET /reconcile?hour=..."],
+            "period_totals": ["POST /period-totals", "PUT /period-totals", "GET /period-totals?meter_id=...&date=..."],
+            "recovery": ["GET /recovery?meter_id=...&date=...", "GET /recovery/{meter_id}/{date}"],
+            "daily_details": ["GET /meters/{meter_id}/hours?date=...", "GET /hourly-readings?meter_id=...&date=..."],
         },
     }
 
@@ -233,10 +236,20 @@ def get_meter_tree(hour: str | None = None) -> dict[str, Any]:
 
 @router.get("/meters/{meter_id}")
 @router.get("/meter/{meter_id}")
-def get_meter(meter_id: str, hour: str | None = None) -> dict[str, Any]:
+def get_meter(meter_id: str, request: Request, hour: str | None = None) -> dict[str, Any]:
     tree = service.list_meters_tree(hour)
     for meter in tree["meters"]:
         if meter["meter_id"] == meter_id:
+            # Convenience: ?date=YYYY-MM-DD attaches the 24h recovery bundle.
+            params = request.query_params
+            date_value = params.get("date") or params.get("day") or params.get("utc_date")
+            if date_value:
+                from . import recovery_service
+
+                daily = recovery_service.get_daily_details(meter_id=meter_id, date_value=date_value)
+                meter["daily"] = daily
+                meter["recovery"] = daily
+                meter["hours"] = daily["hours"]
             return meter
     from .errors import NotFoundProblem
 
